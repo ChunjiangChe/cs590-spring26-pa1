@@ -157,12 +157,6 @@ def sgd_epoch(
     return model_weights, average_loss
 
 def train_model():
-    """Train a logistic regression model with handwritten digit dataset.
-
-    Note
-    ----
-    Your implementation should NOT make changes to this function.
-    """
     # Set up model params
 
     # TODO: Tune your hyperparameters here
