@@ -284,4 +284,3 @@ if __name__ == "__main__":
     test_broadcast()
     test_sqrt()
     test_power()
-

@@ -10,6 +10,7 @@ from sklearn.preprocessing import OneHotEncoder
 import auto_diff as ad
 import torch
 from torchvision import datasets, transforms
+import math
 
 max_len = 28
 
@@ -35,6 +36,23 @@ def transformer(X: ad.Node, nodes: List[ad.Node],
     """
 
     """TODO: Your code here"""
+    W_q, W_k, W_v, W_1, b_1, W_2, b_2 = nodes
+    Q = ad.matmul(X, ad.broadcast(W_q, input_shape=(seq_length, model_dim), target_shape=(batch_size, seq_length, model_dim)))  # (batch_size, seq_length, model_dim)
+    K = ad.matmul(X, ad.broadcast(W_k, input_shape=(seq_length, model_dim), target_shape=(batch_size, seq_length, model_dim)))  # (batch_size, seq_length, model_dim)
+    V = ad.matmul(X, ad.broadcast(W_v, input_shape=(seq_length, model_dim), target_shape=(batch_size, seq_length, model_dim)))  # (batch_size, seq
+
+    attention_scores = ad.matmul(Q, ad.transpose(K, -2, -1))  # (batch_size, seq_length, seq_length)
+    attention_scores_scaled = ad.div_by_const(attention_scores, np.sqrt(model_dim))
+    attention_weights = ad.matmul(ad.softmax(attention_scores_scaled, dim=-1), V)  # (batch_size, seq_length, seq_length)
+
+    attention_normalized_1 = ad.layernorm(attention_weights, normalized_shape=[model_dim], eps=eps)  # (batch_size, seq_length, seq_length)
+    feed_forward_out = ad.matmul(attention_normalized_1, ad.broadcast(W_1, input_shape=[model_dim, model_dim], target_shape=[batch_size, model_dim, model_dim])) + ad.broadcast(b_1, input_shape=[model_dim], target_shape=[batch_size, seq_length, model_dim])
+    feed_forward_out = ad.relu(feed_forward_out)
+    feed_forward_out = ad.matmul(feed_forward_out, ad.broadcast(W_2, input_shape=[model_dim, num_classes], target_shape=[batch_size, model_dim, num_classes])) + ad.broadcast(b_2, input_shape=[num_classes], target_shape=[batch_size, seq_length, num_classes])
+
+    attention_normalized_2 = ad.layernorm(feed_forward_out, normalized_shape=[num_classes], eps=eps)
+    output = ad.mean(feed_forward_out, dim=(1, ), keepdim=False)
+    return output
 
 
 def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:
@@ -69,7 +87,9 @@ def softmax_loss(Z: ad.Node, y_one_hot: ad.Node, batch_size: int) -> ad.Node:
     Try to think about why our softmax loss may need the batch size.
     """
     """TODO: Your code here"""
-
+    p = ad.log(ad.softmax(Z))
+    res = ad.mean(-1.0 * ad.sum_op(ad.mul(y_one_hot, p), dim=(-1,), keepdim=False), dim=(-1,), keepdim=False)
+    return res
 
 
 def sgd_epoch(
@@ -126,27 +146,39 @@ def sgd_epoch(
     num_batches = (num_examples + batch_size - 1) // batch_size  # Compute the number of batches
     total_loss = 0.0
 
+    
     for i in range(num_batches):
+        print(f"Processing batch {i+1}/{num_batches}")
         # Get the mini-batch data
         start_idx = i * batch_size
-        if start_idx + batch_size> num_examples:continue
+        # if start_idx + batch_size > num_examples:
+        #     continue
         end_idx = min(start_idx + batch_size, num_examples)
         X_batch = X[start_idx:end_idx, :max_len]
         y_batch = y[start_idx:end_idx]
         
         # Compute forward and backward passes
         # TODO: Your code here
+        _, loss, *gradients = f_run_model([X_batch, y_batch] + model_weights)
+
+        max_norm=1.0
+        total_norm = torch.sqrt(sum(torch.sum(g**2) for g in gradients))
+    
+        if total_norm > max_norm:
+            scale_factor = max_norm / (total_norm + 1e-6)  # Avoid division by zero
+            gradients = [g * scale_factor for g in gradients]
 
         
         # Update weights and biases
         # TODO: Your code here
         # Hint: You can update the tensor using something like below:
         # W_Q -= lr * grad_W_Q.sum(dim=0)
+        for w, w_grad in zip(model_weights, gradients):
+            w -= lr * w_grad
 
         # Accumulate the loss
         # TODO: Your code here
-
-
+        total_loss += loss.item()
     # Compute the average loss
     
     average_loss = total_loss / num_examples
@@ -160,29 +192,40 @@ def train_model():
     # Set up model params
 
     # TODO: Tune your hyperparameters here
+    W_embed = ad.Variable("W_embed")
+    W_Q = ad.Variable("W_Q")
+    W_K = ad.Variable("W_K")
+    W_V = ad.Variable("W_V")
+    W_1 = ad.Variable("W_1")
+    b_1 = ad.Variable("b_1")
+    W_2 = ad.Variable("W_2")
+    b_2 = ad.Variable("b_2")
+    model_params = [W_Q, W_K, W_V, W_1, b_1, W_2, b_2]
     # Hyperparameters
-    input_dim = 28  # Each row of the MNIST image
-    seq_length = max_len  # Number of rows in the MNIST image
+    seq_length = max_len
+    input_dim = seq_length  # Number of rows in the MNIST image
     num_classes = 10 #
     model_dim = 128 #
     eps = 1e-5 
 
     # - Set up the training settings.
-    num_epochs = 20
+    num_epochs = 5
     batch_size = 50
     lr = 0.02
 
     # TODO: Define the forward graph.
+    x = ad.Variable('x')
 
-    y_predict: ad.Node = ... # TODO: The output of the forward pass
+    y_predict: ad.Node = transformer(x, nodes=model_params, model_dim=model_dim, seq_length=seq_length, eps=float(eps), batch_size=batch_size, num_classes=num_classes) # TODO: The output of the forward pass
     y_groundtruth = ad.Variable(name="y")
     loss: ad.Node = softmax_loss(y_predict, y_groundtruth, batch_size)
     
     # TODO: Construct the backward graph.
-    
+    training_inputs = [x, y_groundtruth] + model_params
+    inference_inputs = [x] + model_params
 
     # TODO: Create the evaluator.
-    grads: List[ad.Node] = ... # TODO: Define the gradient nodes here
+    grads: List[ad.Node] = ad.gradients(loss, nodes=model_params) # TODO: Define the gradient nodes here
     evaluator = ad.Evaluator([y_predict, loss, *grads])
     test_evaluator = ad.Evaluator([y_predict])
 
@@ -199,8 +242,14 @@ def train_model():
     test_dataset = datasets.MNIST(root="./data", train=False, transform=transform, download=True)
 
     # Convert the train dataset to NumPy arrays
+
     X_train = train_dataset.data.numpy().reshape(-1, 28 , 28) / 255.0  # Flatten to 784 features
     y_train = train_dataset.targets.numpy()
+
+    subset_size = 1000
+    indices = np.random.choice(len(X_train), subset_size, replace=False)
+    X_train = X_train[indices]
+    y_train = y_train[indices]
 
     # Convert the test dataset to NumPy arrays
     X_test = test_dataset.data.numpy().reshape(-1, 28 , 28) / 255.0  # Flatten to 784 features
@@ -233,7 +282,7 @@ def train_model():
         result = evaluator.run(
             input_values={
                 # TODO: Fill in the mapping from variable to tensor
-
+                node: inp for node, inp in zip(training_inputs, model_weights)
 
             }
         )
@@ -251,11 +300,12 @@ def train_model():
             if start_idx + batch_size> num_examples:continue
             end_idx = min(start_idx + batch_size, num_examples)
             X_batch = X_val[start_idx:end_idx, :max_len]
-            logits = test_evaluator.run({
+            logits = test_evaluator.run(
                 # TODO: Fill in the mapping from variable to tensor
-
-
-            })
+                input_values={
+                    node: inp for node, inp in zip(inference_inputs, [X_batch] + model_weights)
+                }
+            )
             all_logits.append(logits[0])
         # Concatenate all logits and return the predicted classes
         concatenated_logits = np.concatenate(all_logits, axis=0)
@@ -264,7 +314,14 @@ def train_model():
 
     # Train the model.
     X_train, X_test, y_train, y_test= torch.tensor(X_train), torch.tensor(X_test), torch.DoubleTensor(y_train), torch.DoubleTensor(y_test)
-    model_weights: List[torch.Tensor] = [] # TODO: Initialize the model weights here
+    W_Q_val = torch.from_numpy(W_Q_val).to(torch.float64)
+    W_K_val = torch.from_numpy(W_K_val).to(torch.float64)
+    W_V_val = torch.from_numpy(W_V_val).to(torch.float64)
+    W_1_val = torch.from_numpy(W_1_val).to(torch.float64)
+    W_2_val = torch.from_numpy(W_2_val).to(torch.float64)
+    b_1_val = torch.from_numpy(b_1_val).to(torch.float64)
+    b_2_val = torch.from_numpy(b_2_val).to(torch.float64)
+    model_weights: List[torch.Tensor] = [W_Q_val, W_K_val, W_V_val, W_1_val, b_1_val, W_2_val, b_2_val] # TODO: Initialize the model weights here
     for epoch in range(num_epochs):
         X_train, y_train = shuffle(X_train, y_train)
         model_weights, loss_val = sgd_epoch(

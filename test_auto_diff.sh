@@ -1,0 +1,4 @@
+pytest tests/test_auto_diff_node_forward.py
+pytest tests/test_auto_diff_node_backward.py
+pytest tests/test_auto_diff_graph_forward.py
+pytest tests/test_auto_diff_graph_backward.py
