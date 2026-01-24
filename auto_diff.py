@@ -855,20 +855,55 @@ class Evaluator:
             The list of values for nodes in `eval_nodes` field.
         """
         """TODO: your code here"""
-        def recursive_compute(node: Node):
-            # print(node.name)
-            inputs = node.inputs
-            if inputs == []:
-                if node in input_values:
-                    return input_values[node]
+        def iterative_compute(root_node: Node):
+    # Stack stores the nodes we need to visit
+            stack = [root_node]
+            
+            # Dictionary to store the results of computed nodes
+            # Acts as both the "return value" storage and the "visited" set
+            results = {}
+
+            while stack:
+                # Peek at the current node (don't pop yet)
+                curr = stack[-1]
+
+                if curr in results:
+                    stack.pop()
+                    continue
+
+                ready_to_compute = True
+                for inp in curr.inputs:
+                    if inp not in results:
+                        ready_to_compute = False
+                        break
+                
+                if ready_to_compute:
+                    
+                    if not curr.inputs:
+                        # Leaf Node Logic
+                        if curr in input_values:
+                            results[curr] = input_values[curr]
+                        else:
+                            raise ValueError(f"Input value for node {curr.name} not provided.")
+                    else:
+                    
+                        re_inputs = [results[inp] for inp in curr.inputs]
+                        results[curr] = curr.op.compute(curr, re_inputs)
+                    
+                    
+                    stack.pop()
+                    
                 else:
-                    raise ValueError(f"Input value for node {node.name} not provided.")
-            else:
-                re_inputs = [recursive_compute(input_node) for input_node in inputs]
-                return node.op.compute(node, re_inputs)
+                    
+                    for inp in reversed(curr.inputs):
+                        if inp not in results:
+                            stack.append(inp)
+
+            
+            return results[root_node]
         output_values = []
         for node in self.eval_nodes:
-            output_tensor = recursive_compute(node)
+            output_tensor = iterative_compute(node)
             output_values.append(output_tensor)
         return output_values
 
@@ -895,8 +930,10 @@ def gradients(output_node: Node, nodes: List[Node]) -> List[Node]:
     
     
     reverse_topo_nodes = list(reversed(topological_sort([output_node])))
+
     grads = {n: [] for n in reverse_topo_nodes}
     grads[output_node].append(ones_like(output_node))
+    
     for node in reverse_topo_nodes:
         grads[node] = sum(grads[node])
         if node.inputs == []:

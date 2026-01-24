@@ -11,6 +11,7 @@ import auto_diff as ad
 import torch
 from torchvision import datasets, transforms
 import math
+import random
 
 max_len = 28
 
@@ -148,7 +149,12 @@ def sgd_epoch(
 
     
     for i in range(num_batches):
-        print(f"Processing batch {i+1}/{num_batches}")
+        print(f"Processing batch {i}/{num_batches}")
+
+        if random.random() < 0.5:
+            continue
+
+        # Your logic here
         # Get the mini-batch data
         start_idx = i * batch_size
         # if start_idx + batch_size > num_examples:
@@ -165,7 +171,7 @@ def sgd_epoch(
         total_norm = torch.sqrt(sum(torch.sum(g**2) for g in gradients))
     
         if total_norm > max_norm:
-            scale_factor = max_norm / (total_norm + 1e-6)  # Avoid division by zero
+            scale_factor = max_norm / (total_norm + 1e-6)  
             gradients = [g * scale_factor for g in gradients]
 
         
@@ -209,7 +215,7 @@ def train_model():
     eps = 1e-5 
 
     # - Set up the training settings.
-    num_epochs = 5
+    num_epochs = 10
     batch_size = 50
     lr = 0.02
 
@@ -246,10 +252,6 @@ def train_model():
     X_train = train_dataset.data.numpy().reshape(-1, 28 , 28) / 255.0  # Flatten to 784 features
     y_train = train_dataset.targets.numpy()
 
-    subset_size = 1000
-    indices = np.random.choice(len(X_train), subset_size, replace=False)
-    X_train = X_train[indices]
-    y_train = y_train[indices]
 
     # Convert the test dataset to NumPy arrays
     X_test = test_dataset.data.numpy().reshape(-1, 28 , 28) / 255.0  # Flatten to 784 features
@@ -269,7 +271,6 @@ def train_model():
     W_Q_val = np.random.uniform(-stdv, stdv, (input_dim, model_dim))
     W_K_val = np.random.uniform(-stdv, stdv, (input_dim, model_dim))
     W_V_val = np.random.uniform(-stdv, stdv, (input_dim, model_dim))
-    W_O_val = np.random.uniform(-stdv, stdv, (model_dim, model_dim))
     W_1_val = np.random.uniform(-stdv, stdv, (model_dim, model_dim))
     W_2_val = np.random.uniform(-stdv, stdv, (model_dim, num_classes))
     b_1_val = np.random.uniform(-stdv, stdv, (model_dim,))
@@ -324,6 +325,11 @@ def train_model():
     model_weights: List[torch.Tensor] = [W_Q_val, W_K_val, W_V_val, W_1_val, b_1_val, W_2_val, b_2_val] # TODO: Initialize the model weights here
     for epoch in range(num_epochs):
         X_train, y_train = shuffle(X_train, y_train)
+        # subset_size = 1000
+        # indices = np.random.choice(len(X_train), subset_size, replace=False)
+        # X_train = X_train[indices]
+        # y_train = y_train[indices]
+
         model_weights, loss_val = sgd_epoch(
             f_run_model, X_train, y_train, model_weights, batch_size, lr
         )
